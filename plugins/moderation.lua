@@ -1,678 +1,690 @@
---------------------------------------------------
---      ____  ____ _____                        --
---     |    \|  _ )_   _|___ ____   __  __      --
---     | |_  )  _ \ | |/ ·__|  _ \_|  \/  |     --
---     |____/|____/ |_|\____/\_____|_/\/\_|     --
---                                              --
---------------------------------------------------
---                                              --
---       Developers: @Josepdal & @MaSkAoS       --
---     Support: @Skneos,  @iicc1 & @serx666     --
---                                              --
---------------------------------------------------
-
 do
 
-local function index_gban(user_id)
-  for k,v in pairs(_gbans.gbans_users) do
-    if tonumber(user_id) == tonumber(v) then
-      return k
+local function callback(extra, success, result)
+  vardump(success, result)
+end
+
+local function is_spromoted(chat_id, user_id)
+  local hash =  'sprom:'..chat_id..':'..user_id
+  local spromoted = redis:get(hash)
+  return spromoted or false
+end
+
+local function spromote(receiver, user_id, username)
+  local chat_id = string.gsub(receiver, '.+#id', '')
+  local data = load_data(_config.moderation.data)
+  if not data[tostring(chat_id)] then
+    return send_large_msg(receiver, 'Group is not added.')
+  end
+  if data[tostring(chat_id)]['moderators'][tostring(user_id)] then
+    if is_spromoted(chat_id, user_id) then
+      return send_large_msg(receiver, 'Already as moderator leader')
+    end
+    local hash =  'sprom:'..chat_id..':'..user_id
+  redis:set(hash, true)
+  send_large_msg(receiver, 'User '..username..' ['..user_id..'] promoted as moderator leader')
+  return
+  else
+    data[tostring(chat_id)]['moderators'][tostring(user_id)] = string.gsub(username, '@', '')
+    save_data(_config.moderation.data, data)
+    local hash =  'sprom:'..chat_id..':'..user_id
+    redis:set(hash, true)
+    send_large_msg(receiver, 'User '..username..' ['..user_id..'] promoted as moderator leader')
+    return
+  end
+end
+
+local function sdemote(receiver, user_id, username)
+  local chat_id = string.gsub(receiver, '.+#id', '')
+  if not is_spromoted(chat_id, user_id) then
+    return send_large_msg(receiver, 'Not a moderator leader')
+  end
+  local data = load_data(_config.moderation.data)
+  data[chat_id]['moderators'][tostring(user_id)] = nil
+  save_data(_config.moderation.data, data)
+  local hash =  'sprom:'..chat_id..':'..user_id
+  redis:del(hash)
+  send_large_msg(receiver, 'User '..username..' ['..user_id..'] demoted!')
+end
+
+local function check_member(cb_extra, success, result)
+   local receiver = cb_extra.receiver
+   local data = cb_extra.data
+   local msg = cb_extra.msg
+   for k,v in pairs(result.members) do
+      local user_id = v.id
+      if user_id ~= our_id then
+          local username = v.username
+          data[tostring(msg.to.id)] = {
+            moderators ={},
+            settings = {
+              set_name = string.gsub(msg.to.print_name, '_', ' '),
+              lock_name = 'no',
+              lock_photo = 'no',
+              lock_member = 'no',
+              lock_bot = 'yes',
+              lock_link = 'no',
+              lock_inviteme = 'no',
+              lock_sticker = 'no',
+              lock_image = 'no',
+              --lock_video = 'no',
+              --lock_audio = 'no',
+              lock_file = 'no',
+              lock_talk = 'no'
+            },
+            group_type = msg.to.type,
+            blocked_words = {},
+          }
+          save_data(_config.moderation.data, data)
+          local hash =  'sprom:'..msg.to.id..':'..user_id
+          redis:set(hash, true)
+          return send_large_msg(receiver, 'You have been promoted as moderator for this group.')
+      end
+    end
+end
+
+local function modadd(msg)
+  if not is_admin(msg) then
+    return
+  end
+  local data = load_data(_config.moderation.data)
+  if data[tostring(msg.to.id)] then
+    return 'Group is already added.'
+  end
+  data[tostring(msg.to.id)] = {
+    moderators ={},
+    settings = {
+      set_name = string.gsub(msg.to.print_name, '_', ' '),
+      lock_name = 'no',
+      lock_photo = 'no',
+      lock_member = 'no',
+      lock_bot = 'yes',
+      lock_link = 'no',
+      lock_inviteme = 'no',
+      lock_sticker = 'no',
+      lock_image = 'no',
+      --lock_video = 'no',
+      --lock_audio  = 'no',
+      lock_file = 'no',
+      lock_talk = 'no',
+    },
+    group_type = msg.to.type,
+    blocked_words = {},
+  }
+  save_data(_config.moderation.data, data)
+  return 'Group has been added.'
+end
+
+local function modrem(msg)
+  if not is_admin(msg) then
+    return "You're not admin"
+  end
+  local data = load_data(_config.moderation.data)
+  local receiver = get_receiver(msg)
+  if not data[tostring(msg.to.id)] then
+    return 'Group is not added.'
+  end
+
+  data[tostring(msg.to.id)] = nil
+  save_data(_config.moderation.data, data)
+
+  return 'Group has been removed'
+end
+
+local function promote(receiver, username, user_id)
+  local data = load_data(_config.moderation.data)
+  local group = string.gsub(receiver, '.+#id', '')
+  if not data[group] then
+    return send_large_msg(receiver, 'Group is not added.')
+  end
+  if data[group]['moderators'][tostring(user_id)] then
+    return send_large_msg(receiver, username..' is already a moderator.')
+    end
+    data[group]['moderators'][tostring(user_id)] = string.gsub(username, '@', '')
+    save_data(_config.moderation.data, data)
+    return send_large_msg(receiver, username..' has been promoted.')
+end
+
+local function demote(receiver, username, user_id)
+  local data = load_data(_config.moderation.data)
+  local group = string.gsub(receiver, '.+#id', '')
+  if not data[group] then
+    return send_large_msg(receiver, 'Group is not added.')
+  end
+  if not data[group]['moderators'][tostring(user_id)] then
+    return send_large_msg(receiver, string.gsub(username, '@', '')..' is not a moderator.')
+  end
+  data[group]['moderators'][tostring(user_id)] = nil
+  save_data(_config.moderation.data, data)
+  return send_large_msg(receiver, username..' has been demoted.')
+end
+
+local function upmanager(receiver, username, user_id)
+  channel_set_admin(receiver, 'user#id'..user_id, callback, false)
+  return send_large_msg(receiver, 'Done!')
+end
+
+local function inmanager(receiver, username, user_id)
+  --channel_set_admin(receiver, 'user#id'..user_id, callback, false)
+  return send_large_msg(receiver, 'This feature is under development')
+end
+
+local function admin_promote(receiver, username, user_id)  
+  local data = load_data(_config.moderation.data)
+  if not data['admins'] then
+    data['admins'] = {}
+    save_data(_config.moderation.data, data)
+  end
+
+  if data['admins'][tostring(user_id)] then
+    return send_large_msg(receiver, username..' is already as admin.')
+  end
+  
+  data['admins'][tostring(user_id)] = string.gsub(username, '@', '')
+  save_data(_config.moderation.data, data)
+  return send_large_msg(receiver, username..' has been promoted as admin.')
+end
+
+local function admin_demote(receiver, username, user_id)
+    local data = load_data(_config.moderation.data)
+  if not data['admins'] then
+    data['admins'] = {}
+    save_data(_config.moderation.data, data)
+  end
+
+  if not data['admins'][tostring(user_id)] then
+    return send_large_msg(receiver, username..' is not an admin.')
+  end
+
+  data['admins'][tostring(user_id)] = nil
+  save_data(_config.moderation.data, data)
+
+  return send_large_msg(receiver, 'Admin '..username..' has been demoted.')
+end
+
+local function username_id(cb_extra, success, result)
+   local get_cmd = cb_extra.get_cmd
+   local receiver = cb_extra.receiver
+   local member = cb_extra.member
+   local text = 'No user @'..member..' in this group.'
+   for k,v in pairs(result.members) do
+      vusername = v.username
+      if vusername == member then
+        username = member
+        user_id = v.peer_id
+        if get_cmd == 'promote' then
+            return promote(receiver, username, user_id)
+        elseif get_cmd == 'demote' then
+          if is_spromoted(string.gsub(receiver,'.+#id', ''), user_id) then
+            return send_large_msg(receiver, 'Can\'t demote leader')
+          end
+          return demote(receiver, username, user_id)
+        elseif get_cmd == 'adminprom' then
+          if user_id == our_id then
+            return
+          end
+          return admin_promote(receiver, username, user_id)
+        elseif get_cmd == 'admindem' then
+          if user_id == our_id then
+            return
+          end
+          return admin_demote(receiver, username, user_id)
+        elseif get_cmd == 'spromote' then
+          return spromote(receiver, user_id, username)
+        elseif get_cmd == 'sdemote' then
+          return sdemote(receiver, user_id, username)
+        end
+      end
+   end
+   send_large_msg(receiver, text)
+end
+
+local function channel_username_id(cb_extra, success, result)
+   local get_cmd = cb_extra.get_cmd
+   local receiver = cb_extra.receiver
+   local member = cb_extra.member
+   local text = 'No user @'..member..' in this group.'
+   for k,v in pairs(result) do
+      vusername = v.username
+      if vusername == member then
+        username = member
+        user_id = v.peer_id
+        if get_cmd == 'promote' then
+          return promote(receiver, username, user_id)
+        elseif get_cmd == 'demote' then
+          if is_spromoted(string.gsub(receiver,'.+#id', ''), user_id) then
+            return send_large_msg(receiver, 'Can\'t demote leader')
+          end
+          return demote(receiver, username, user_id)
+        elseif get_cmd == 'adminprom' then
+          if user_id == our_id then
+            return
+          end
+          return admin_promote(receiver, username, user_id)
+        elseif get_cmd == 'admindem' then
+          if user_id == our_id then
+            return
+          end
+          return admin_demote(receiver, username, user_id)
+        elseif get_cmd == 'spromote' then
+          return spromote(receiver, user_id, username)
+        elseif get_cmd == 'sdemote' then
+          return sdemote(receiver, user_id, username)
+        elseif get_cmd == 'upmanager' then
+          return upmanager(receiver, username, user_id)
+        elseif get_cmd == 'inmanager' then
+          return inmanager(receiver, username, user_id)
+        end
+      end
+   end
+   send_large_msg(receiver, text)
+end
+
+local function get_msg_callback(extra, success, result)
+  if success ~= 1 then return end
+  local get_cmd = extra.get_cmd
+  local receiver = extra.receiver
+  local user_id = result.from.peer_id
+  local chat_id = result.to.id
+  if result.from.username then
+    username = '@'..result.from.username
+  else
+    username = string.gsub(result.from.print_name, '_', ' ')
+  end
+  if get_cmd == 'spromote' then
+    if user_id == our_id then
+      return nil
+    end
+    return spromote(receiver, user_id, username)
+  end
+  if get_cmd == 'sdemote' then
+    if user_id == our_id then
+      return nil
+    end
+    return sdemote(receiver, user_id, username)
+  end
+  if get_cmd == 'promote' then
+    if user_id == our_id then
+      return nil
+    end
+    return promote(receiver, username, user_id)
+  end
+  if get_cmd == 'demote' then
+    if user_id == our_id then
+      return nil
+    end
+    if is_spromoted(chat_id, user_id) then
+      return send_large_msg(receiver, 'Can\'t demote leader')
+    end
+    return demote(receiver, username, user_id)
+  end
+  if get_cmd == 'upmanager' then
+    return upmanager(receiver, username, user_id)
+  end
+  if get_cmd == 'inmanager' then
+    return inmanager(receiver, username, user_id)
+  end
+end
+
+local function modlist(msg)
+  local data = load_data(_config.moderation.data)
+  if not data[tostring(msg.to.id)] then
+    return 'Group is not added.'
+  end
+  -- determine if table is empty
+  if next(data[tostring(msg.to.id)]['moderators']) == nil then --fix way
+    return 'No moderator in this group.'
+  end
+  local message = 'List of moderators for ' .. string.gsub(msg.to.print_name, '_', ' ') .. ':\n'
+  for k,v in pairs(data[tostring(msg.to.id)]['moderators']) do
+    if is_spromoted(msg.to.id, k) then
+      message = message .. '- '..v..' [' ..k.. '] * \n'
+    else
+      message = message .. '- '..v..' [' ..k.. '] \n'
     end
   end
-  -- If not found
-  return false
+
+  return message
 end
 
-local function unmute_by_reply(extra, success, result)
-    result = backward_msg_format(result)
-    local msg = result
-    local chat = msg.to.id
-    local user = msg.from.id
-    local name = msg.from.username
-    local hash = 'muted:'..chat..':'..user
-    redis:del(hash)
-    if msg.to.type == 'chat' then
-        send_msg('chat#id'..chat, 'ℹ️ '..lang_text(chat, 'userUnmuted:1')..' '..name..' ('..user..') '..lang_text(chat, 'userUnmuted:2'), ok_cb,  true)
-    elseif msg.to.type == 'channel' then
-        send_msg('channel#id'..chat, 'ℹ️ '..lang_text(chat, 'userUnmuted:1')..' '..name..' ('..user..') '..lang_text(chat, 'userUnmuted:2'), ok_cb,  true)
+local function admin_list(msg)
+    local data = load_data(_config.moderation.data)
+  if not data['admins'] then
+    data['admins'] = {}
+    save_data(_config.moderation.data, data)
+  end
+  if next(data['admins']) == nil then --fix way
+    return 'No admin available.'
+  end
+  local message = 'List for Bot admins:\n'
+  for k,v in pairs(data['admins']) do
+    message = message .. '- ' .. v ..' ['..k..'] \n'
+  end
+  return message
+end
+
+function run(msg, matches)
+  if is_chat_msg(msg) then
+    local get_cmd = matches[1]
+    local receiver = get_receiver(msg)
+    if matches[1] == 'modadd' then
+      return modadd(msg)
     end
-end
-
-local function mute_by_reply(extra, success, result)
-    result = backward_msg_format(result)
-    local msg = result
-    local chat = msg.to.id
-    local user = msg.from.id
-    local name = msg.from.username
-    local hash = 'muted:'..chat..':'..user
-    redis:set(hash, true)
-    if msg.to.type == 'chat' then
-        send_msg('chat#id'..chat, 'ℹ️ '..lang_text(chat, 'userMuted:1')..' '..name..' ('..user..') '..lang_text(chat, 'userMuted:2'), ok_cb,  true)
-    elseif msg.to.type == 'channel' then
-        send_msg('channel#id'..chat, 'ℹ️ '..lang_text(chat, 'userMuted:1')..' '..name..' ('..user..') '..lang_text(chat, 'userMuted:2'), ok_cb,  true)
-    end
-end
-
-local function mute_by_username(cb_extra, success, result)
-    chat_type = cb_extra.chat_type
-    chat_id = cb_extra.chat_id
-    user_id = result.peer_id
-    user_username = result.username
-    local hash =  'muted:'..chat_id..':'..user_id
-    redis:set(hash, true)
-    if chat_type == 'chat' then
-        send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'userMuted:1')..' '..user_username..' ('..user_id..') '..lang_text(chat_id, 'userMuted:2'), ok_cb,  true)
-    elseif chat_type == 'channel' then
-        send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'userMuted:1')..' '..user_username..' ('..user_id..') '..lang_text(chat_id, 'userMuted:2'), ok_cb,  true)
-    end
-end
-
-local function unmute_by_username(cb_extra, success, result)
-    chat_type = cb_extra.chat_type
-    chat_id = cb_extra.chat_id
-    user_id = result.peer_id
-    user_username = result.username
-    local hash =  'muted:'..chat_id..':'..user_id
-    redis:del(hash)
-    if chat_type == 'chat' then
-        send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'userMuted:1')..' '..user_username..' ('..user_id..') '..lang_text(chat_id, 'userUnmuted:2'), ok_cb,  true)
-    elseif chat_type == 'channel' then
-        send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'userMuted:1')..' '..user_username..' ('..user_id..') '..lang_text(chat_id, 'userUnmuted:2'), ok_cb,  true)
-    end
-end
-
-local function kick_user(user_id, chat_id)
-    local chat = 'chat#id'..chat_id
-    local user = 'user#id'..user_id
-    local channel = 'channel#id'..chat_id
-    if user_id == tostring(our_id) then
-        print("I won't kick myself!")
-    else
-        chat_del_user(chat, user, ok_cb, true)
-        channel_kick_user(channel, user, ok_cb, true)
-    end
-end
-
-local function ban_user(user_id, chat_id)
-    local chat = 'chat#id'..chat_id
-    if user_id == tostring(our_id) then
-        print('I won\'t kick myself!')
-    else
-        -- Save to redis
-        local hash =  'banned:'..chat_id..':'..user_id
-        redis:set(hash, true)
-    end
-end
-
-local function unban_user(user_id, chat_id)
-    local hash =  'banned:'..chat_id..':'..user_id
-    redis:del(hash)
-end
-
-local function is_banned(user_id, chat_id)
-    local hash =  'banned:'..chat_id..':'..user_id
-    local banned = redis:get(hash)
-    return banned or false
-end
-
-local function chat_kick(extra, success, result)
-    result = backward_msg_format(result)
-    local msg = result
-    local chat = msg.to.id
-    local user = msg.from.id
-    local chat_type = msg.to.type
-    if chat_type == 'chat' then
-        chat_del_user('chat#id'..chat, 'user#id'..user, ok_cb, false)
-        send_msg('chat#id'..chat, 'ℹ️ '..lang_text(chat, 'kickUser:1')..' '..user..' '..lang_text(chat, 'kickUser:2'), ok_cb,  true)
-    elseif chat_type == 'channel' then
-        channel_kick_user('channel#id'..chat, 'user#id'..user, ok_cb, false)
-        send_msg('channel#id'..chat, 'ℹ️ '..lang_text(chat, 'kickUser:1')..' '..user..' '..lang_text(chat, 'kickUser:2'), ok_cb,  true)
-    end
-end
-
-local function chat_ban(extra, success, result)
-    result = backward_msg_format(result)
-    local msg = result
-    local chat = msg.to.id
-    local user = msg.from.id
-    local hash =  'banned:'..chat..':'..user
-    redis:set(hash, true)
-    chat_del_user('chat#id'..chat, 'user#id'..user, ok_cb, false)
-    send_msg('chat#id'..chat, 'ℹ️ '..lang_text(chat, 'banUser:1')..' '..user..' '..lang_text(chat, 'banUser:2'), ok_cb,  true)
-end
-
-local function gban_by_reply(extra, success, result)
-    result = backward_msg_format(result)
-    local msg = result
-    local chat = msg.to.id
-    local user = msg.from.id
-    local hash = 'gban:'..user
-    redis:set(hash, true)
-    if not is_gbanned_table(msg.to.id) then
-        table.insert(_gbans.gbans_users, tonumber(msg.to.id))
-        print(msg.to.id..' added to _gbans table')
-        save_gbans()
-    end
-    if msg.to.type == 'chat' then
-        chat_del_user('chat#id'..chat, 'user#id'..user, ok_cb, false)
-        send_msg('chat#id'..chat, 'ℹ️ '..lang_text(chat, 'gbanUser:1')..' '..user..' '..lang_text(chat, 'gbanUser:2'), ok_cb,  true)
-    elseif msg.to.type == 'channel' then
-        channel_kick_user('channel#id'..chat, 'user#id'..user, ok_cb, false)
-        send_msg('channel#id'..chat, 'ℹ️ '..lang_text(chat, 'gbanUser:1')..' '..user..' '..lang_text(chat, 'gbanUser:2'), ok_cb,  true)
-    end
-end
-
-local function ungban_by_reply(extra, success, result)
-    result = backward_msg_format(result)
-    local msg = result
-    local chat = msg.to.id
-    local user = msg.from.id
-    local indexid = index_gban(user)
-    local hash = 'gban:'..user
-    redis:del(hash)
-    if is_gbanned_table(user_id) then
-        table.remove(_gbans.gbans_users, indexid)
-        print(user_id..' removed from _gbans table')
-        save_gbans()
-    end
-    if msg.to.type == 'chat' then
-        chat_add_user('chat#id'..chat, 'user#id'..user, ok_cb, false)
-        send_msg('chat#id'..chat, 'ℹ️ '..lang_text(chat, 'ungbanUser:1')..' '..user..' '..lang_text(chat, 'ungbanUser:2'), ok_cb,  true)
-    elseif msg.to.type == 'channel' then
-        channel_invite_user('channel#id'..chat, 'user#id'..user, ok_cb, false)
-        send_msg('channel#id'..chat, 'ℹ️ '..lang_text(chat, 'ungbanUser:1')..' '..user..' '..lang_text(chat, 'ungbanUser:2'), ok_cb,  true)
-    end
-end
-
-local function add_by_reply(extra, success, result)
-    result = backward_msg_format(result)
-    local msg = result
-    local chat = msg.to.id
-    local user = msg.from.id
-    if msg.to.type == 'chat' then
-        chat_add_user('chat#id'..chat, 'user#id'..user, ok_cb, false)
-        send_msg('chat#id'..chat, 'ℹ️ '..lang_text(chat, 'addUser:1')..' '..user..' '..lang_text(chat, 'addUser:2'), ok_cb,  true)
-    elseif msg.to.type == 'channel' then
-        channel_invite_user('channel#id'..chat, 'user#id'..user, ok_cb, false)
-        send_msg('channel#id'..chat, 'ℹ️ '..lang_text(chat, 'addUser:1')..' '..user..' '..lang_text(chat, 'addUser:3'), ok_cb,  true)
-    end
-end
-
-local function channel_ban(extra, success, result)
-    local msg = result
-    msg = backward_msg_format(msg)
-    local chat = msg.to.id
-    local user = msg.from.id
-    channel_kick_user('channel#id'..chat, 'user#id'..user, ok_cb, true)
-    send_msg('channel#id'..chat, 'ℹ️ '..lang_text(chat, 'banUser:1')..' '..user..' '..lang_text(chat, 'banUser:2'), ok_cb,  true)
-    ban_user(user, chat)
-end
-
-local function chat_unban(extra, success, result)
-    result = backward_msg_format(result)
-    local msg = result
-    local chat = msg.to.id
-    local user = msg.from.id
-    unban_user(user, chat)
-    chat_add_user('chat#id'..chat, 'user#id'..user, ok_cb, false)
-    send_msg(chat, 'User '..user..' unbanned', ok_cb,  true)
-end
-
-local function channel_unban(extra, success, result)
-    local msg = result
-    local msg = backward_msg_format(msg)
-    local chat = msg.to.id
-    local user = msg.from.id
-    unban_user(user, chat)
-    channel_invite_user('channel#id'..chat, 'user#id'..user, ok_cb, true)
-    send_msg('channel#id'..chat, 'User '..user..' unbanned', ok_cb,  true)
     
-end
-
-local function ban_by_username(cb_extra, success, result)
-    chat_type = cb_extra.chat_type
-    chat_id = cb_extra.chat_id
-    user_id = result.peer_id
-    user_username = result.username
-    local hash =  'banned:'..chat_id..':'..user_id
-    redis:set(hash, true)
-    if chat_type == 'chat' then
-        send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'banUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'banUser:2'), ok_cb, false)
-        chat_del_user('chat#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-    elseif chat_type == 'channel' then
-        send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'banUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'banUser:2'), ok_cb, false)
-        channel_kick_user('channel#id'..chat_id, 'user#id'..user_id, ok_cb, false)
+    if matches[1] == 'modrem' then
+      return modrem(msg)
     end
-    ban_user(user_id, chat_id)
-end
-
-local function kick_by_username(cb_extra, success, result)
-    chat_id = cb_extra.chat_id
-    user_id = result.peer_id
-    chat_type = cb_extra.chat_type
-    user_username = result.username
-    if chat_type == 'chat' then
-        send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'kickUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'kickUser:2'), ok_cb, false)
-        chat_del_user('chat#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-    elseif chat_type == 'channel' then
-        send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'kickUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'kickUser:2'), ok_cb, false)
-        channel_kick_user('channel#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-    end
-end
-
-local function gban_by_username(cb_extra, success, result)
-    local chat_id = cb_extra.chat_id
-    local user_id = result.peer_id
-    local user_username = result.username
-    local chat_type = cb_extra.chat_type
-    local hash =  'gban:'..user_id
-    redis:set(hash, true)
-    if not is_gbanned_table(user_id) then
-        table.insert(_gbans.gbans_users, tonumber(user_id))
-        print(user_id..' added to _gbans table')
-        save_gbans()
-    end
-    if chat_type == 'chat' then
-        send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'gbanUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'gbanUser:2'), ok_cb, false)
-        chat_del_user('chat#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-    elseif chat_type == 'channel' then
-        send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'gbanUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'gbanUser:2'), ok_cb, false)
-        channel_kick_user('channel#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-    end
-end
-
-local function ungban_by_username(cb_extra, success, result)
-    chat_id = cb_extra.chat_id
-    user_id = result.peer_id
-    user_username = result.username
-    chat_type = cb_extra.chat_type
-    local indexid = index_gban(user_id)
-    local hash =  'gban:'..user_id
-    redis:del(hash)
-    if is_gbanned_table(user_id) then
-        table.remove(_gbans.gbans_users, indexid)
-        print(user_id..' removed from _gbans table')
-        save_gbans()
-    end
-    if chat_type == 'chat' then
-        send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'ungbanUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'ungbanUser:2'), ok_cb, false)
-        chat_add_user('chat#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-    elseif chat_type == 'channel' then
-        send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'ungbanUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'ungbanUser:2'), ok_cb, false)
-        channel_invite_user('channel#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-    end
-end
-
-local function unban_by_username(cb_extra, success, result)
-    chat_type = cb_extra.chat_type
-    chat_id = cb_extra.chat_id
-    user_id = result.peer_id
-    user_username = result.username
-    local hash =  'banned:'..chat_id..':'..user_id
-    redis:del(hash)
-    if chat_type == 'chat' then
-        send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'unbanUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'unbanUser:2'), ok_cb, false)
-        chat_add_user('chat#id'..chat_id, 'user#id'..user_id, callback, false)
-    elseif chat_type == 'channel' then
-        send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'unbanUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'unbanUser:2'), ok_cb, false)
-        channel_invite_user('channel#id'..chat_id, 'user#id'..user_id, callback, false)
-    end
-end
-
-local function add_by_username(cb_extra, success, result)
-    local chat_type = cb_extra.chat_type
-    local chat_id = cb_extra.chat_id
-    local user_id = result.peer_id
-    local user_username = result.username
-    print(chat_id)
-    if chat_type == 'chat' then
-        send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'addUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'addUser:2'), ok_cb, false)
-        chat_add_user('chat#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-    elseif chat_type == 'channel' then
-        send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'addUser:1')..' @'..user_username..' ('..user_id..') '..lang_text(chat_id, 'addUser:3'), ok_cb, false)
-        channel_invite_user('channel#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-    end
-end
-
-local function is_gbanned(user_id)
-    local hash =  'gban:'..user_id
-    local banned = redis:get(hash)
-    return banned or false
-end
-
-local function pre_process(msg)
     
-    --Checking mute
-    local hash = 'muted:'..msg.to.id..':'..msg.from.id
-    if redis:get(hash) then
-        if msg.to.type == 'chat' then
-            delete_msg(msg.id, ok_cb, true)
-        elseif msg.to.type == 'channel' then
-            delete_msg(msg.id, ok_cb, true)
-        end
+    if matches[1] == 'promote' then
+      if not is_momod(msg) then
+        return
+      end
+      if not matches[2] and msg.reply_id then
+        get_message(msg.reply_id, get_msg_callback, {get_cmd=get_cmd, receiver=receiver})
+        return
+      end
+      if not matches[2] then
+        return
+      end
+      local member = string.gsub(matches[2], "@", "")
+      chat_info(receiver, username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
     end
-
-    -- SERVICE MESSAGE
-    if msg.action and msg.action.type then
-        local action = msg.action.type
-        -- Check if banned user joins chat
-        if action == 'chat_add_user' or action == 'chat_add_user_link' then
-            local user_id
-            local hash = 'lockmember:'..msg.to.id
-            if redis:get(hash) then
-                if msg.action.link_issuer then
-                    user_id = msg.from.id
-                else
-                    user_id = msg.action.user.id
-                end
-                kick_user(user_id, msg.to.id)
-                delete_msg(msg.id, ok_cb, true)
-            end
-            if msg.action.link_issuer then
-                user_id = msg.from.id
-            else
-                user_id = msg.action.user.id
-            end
-            print('Checking invited user '..user_id)
-            local banned = is_banned(user_id, msg.to.id) or is_gbanned(user_id)
-            if banned then
-                print('User is banned!')
-                kick_user(user_id, msg.to.id)
-            end
-        end
-        -- No further checks
-        return msg
+    
+    if matches[1] == 'demote' then
+      if not is_momod(msg) then
+        return "Only moderator can demote"
+      end
+      if not matches[2] and msg.reply_id then
+        get_message(msg.reply_id, get_msg_callback, {get_cmd=get_cmd, receiver=receiver})
+        return
+      end
+      if not matches[2] then
+        return
+      end
+      if string.gsub(matches[2], "@", "") == msg.from.username then
+        return "You can't demote yourself"
+      end
+      local member = string.gsub(matches[2], "@", "")
+      chat_info(receiver, username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
     end
-
-    -- BANNED USER TALKING
-    if msg.to.type == 'chat' or msg.to.type == 'channel' then
-        local user_id = msg.from.id
-        local chat_id = msg.to.id
-        local banned = is_banned(user_id, chat_id) or is_gbanned(user_id, msg.to.id)
-        if banned then
-            print('Banned user talking!')
-            ban_user(user_id, chat_id)
-            kick_user(user_id, chat_id)
-            msg.text = ''
-        end
+    
+    if matches[1] == 'spromote' then
+      if not is_admin(msg) then
+        return "Only admin can promote moderator leader"
+      end
+      if not matches[2] and msg.reply_id then
+        get_message(msg.reply_id, get_msg_callback, {get_cmd=get_cmd, receiver=receiver})
+        return
+      end
+      if not matches[2] then
+        return
+      end
+      local member = string.gsub(matches[2], "@", "")
+      chat_info(receiver, username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
     end
-    return msg
-end
-
-local function run(msg, matches)
-    chat_id =  msg.to.id
-    if matches[1] == 'ban' then
-        if permissions(msg.from.id, msg.to.id, "ban") then
-            local chat_id = msg.to.id
-            local chat_type = msg.to.type
-            if msg.reply_id then
-                if msg.to.type == 'chat' then
-                    get_message(msg.reply_id, chat_ban, false)
-                elseif msg.to.type == 'channel' then
-                    get_message(msg.reply_id, channel_ban, {receiver=get_receiver(msg)})
-                end
-                return
-            end
-            if not is_id(matches[2]) then
-                local member = string.gsub(matches[2], '@', '')
-                resolve_username(member, ban_by_username, {chat_id=chat_id, member=member, chat_type=chat_type})
-                return
-            else
-                user_id = matches[2]
-                if chat_type == 'chat' then
-                    send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'banUser:1')..' '..user_id..' '..lang_text(chat, 'banUser:2'), ok_cb, false)
-                    chat_del_user('chat#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-                elseif chat_type == 'channel' then
-                    send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'banUser:1')..' '..user_id..' '..lang_text(chat, 'banUser:2'), ok_cb, false)
-                    channel_kick_user('channel#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-                end
-                ban_user(user_id, chat_id)
-                return
-            end
-        else
-            return '🚫 '..lang_text(msg.to.id, 'require_mod')
-        end
-    elseif matches[1] == 'unban' then
-        if permissions(msg.from.id, msg.to.id, "unban") then
-            local chat_id = msg.to.id
-            local chat_type = msg.to.type
-            if msg.reply_id then
-                if msg.to.type == 'chat' then
-                    get_message(msg.reply_id, chat_unban, false)
-                elseif msg.to.type == 'channel' then
-                    get_message(msg.reply_id, channel_unban, false)
-                end
-                return
-            end
-            if not is_id(matches[2]) then
-                local member = string.gsub(matches[2], '@', '')
-                resolve_username(member, unban_by_username, {chat_id=chat_id, member=member, chat_type=chat_type})
-                return
-            else
-                local hash =  'banned:'..chat_id..':'..matches[2]
-                redis:del(hash)
-                if msg.to.type == 'chat' then
-                    chat_add_user('chat#id'..chat_id, 'user#id'..matches[2], ok_cb, false)
-                elseif msg.to.type == 'channel' then
-                    channel_invite_user('channel#id'..chat_id, 'user#id'..matches[2], ok_cb, false)
-                end
-                return 'ℹ️ '..lang_text(chat_id, 'unbanUser:1')..' '..matches[2]..' '..lang_text(chat_id, 'unbanUser:2')
-            end
-        else
-            return '🚫 '..lang_text(msg.to.id, 'require_mod')
-        end
-    elseif matches[1] == 'kick' then
-        if permissions(msg.from.id, msg.to.id, "kick") then
-            local chat_id = msg.to.id
-            local chat_type = msg.to.type
-            -- Using pattern #kick
-            if msg.reply_id then
-                get_message(msg.reply_id, chat_kick, false)
-                return
-            end
-            if not is_id(matches[2]) then
-                local member = string.gsub(matches[2], '@', '')
-                resolve_username(member, kick_by_username, {chat_id=chat_id, member=member, chat_type=chat_type})
-                return
-            else
-                local user_id = matches[2]
-                if msg.to.type == 'chat' then
-                    send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'kickUser:1')..' '..user_id..' '..lang_text(chat_id, 'kickUser:2'), ok_cb, false)
-                    chat_del_user('chat#id'..msg.to.id, 'user#id'..matches[2], ok_cb, false)
-                elseif msg.to.type == 'channel' then
-                    send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'kickUser:1')..' '..user_id..' '..lang_text(chat_id, 'kickUser:2'), ok_cb, false)
-                    channel_kick_user('channel#id'..msg.to.id, 'user#id'..matches[2], ok_cb, false)
-                end
-                return
-            end
-        else
-            return '🚫 '..lang_text(msg.to.id, 'require_mod')
-        end
-    elseif matches[1] == 'gban' then
-        if permissions(msg.from.id, msg.to.id, "gban") then
-            chat_id = msg.to.id
-            chat_type = msg.to.type
-            if msg.reply_id then
-                get_message(msg.reply_id, gban_by_reply, false)
-                return
-            end
-            if not is_id(matches[2]) then
-                local member = string.gsub(matches[2], '@', '')
-                resolve_username(member, gban_by_username, {chat_id=chat_id, member=member, chat_type=chat_type})
-                return
-            else
-                local user_id = matches[2]
-                local hash = 'gban:'..user_id
-                redis:set(hash, true)
-                if not is_gbanned_table(user_id) then
-                    table.insert(_gbans.gbans_users, tonumber(user_id))
-                    print(user_id..' added to _gbans table')
-                    save_gbans()
-                end
-                if chat_type == 'chat' then
-                    send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'gbanUser:1')..' '..user_id..' '..lang_text(chat_id, 'gbanUser:2'), ok_cb, false)
-                    chat_del_user('chat#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-                elseif chat_type == 'channel' then
-                    send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'gbanUser:1')..' '..user_id..' '..lang_text(chat_id, 'gbanUser:2'), ok_cb, false)
-                    channel_kick_user('channel#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-                end
-                return
-            end
-        else
-            return '🚫 '..lang_text(msg.to.id, 'require_admin')
-        end
-    elseif matches[1] == 'ungban' then
-        if permissions(msg.from.id, msg.to.id, "ungban") then
-        	chat_id = msg.to.id
-        	chat_type = msg.to.type
-            if msg.reply_id then
-                get_message(msg.reply_id, ungban_by_reply, false)
-                return
-            end
-            if not is_id(matches[2]) then
-                local chat_type = msg.to.type
-                local member = string.gsub(matches[2], '@', '')
-                resolve_username(member, ungban_by_username, {chat_id=chat_id, member=member, chat_type=chat_type})
-                return
-            else
-                local user_id = matches[2]
-                local hash = 'gban:'..user_id
-                local indexid = index_gban(user_id)
-                redis:del(hash)
-                if is_gbanned_table(user_id) then
-                    table.remove(_gbans.gbans_users, indexid)
-                    print(user_id..' removed from _gbans table')
-                    save_gbans()
-                end
-                if chat_type == 'chat' then
-                    send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'gbanUser:1')..' '..user_id..' '..lang_text(chat_id, 'ungbanUser:2'), ok_cb, false)
-                    chat_add_user('chat#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-                elseif chat_type == 'channel' then
-                    send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'gbanUser:1')..' '..user_id..' '..lang_text(chat_id, 'ungbanUser:2'), ok_cb, false)
-                    channel_invite_user('channel#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-                end
-                return
-            end
-        else
-            return '🚫 '..lang_text(msg.to.id, 'require_mod')
-        end
-    elseif matches[1] == 'add' then
-        if permissions(msg.from.id, msg.to.id, "add") then
-            local chat_id = msg.to.id
-            local chat_type = msg.to.type
-            if msg.reply_id then
-                get_message(msg.reply_id, add_by_reply, false)
-                return
-            end
-            if not is_id(matches[2]) then
-                local member = string.gsub(matches[2], '@', '')
-                print(chat_id)
-                resolve_username(member, add_by_username, {chat_id=chat_id, member=member, chat_type=chat_type})
-                return
-            else
-                local user_id = matches[2]
-                if chat_type == 'chat' then
-                    send_msg('chat#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'addUser:1')..' '..user_id..' '..lang_text(chat_id, 'addUser:2'), ok_cb, false)
-                    chat_add_user('chat#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-                elseif chat_type == 'channel' then
-                    send_msg('channel#id'..chat_id, 'ℹ️ '..lang_text(chat_id, 'addUser:1')..' '..user_id..' '..lang_text(chat_id, 'addUser:3'), ok_cb, false)
-                    channel_invite_user('channel#id'..chat_id, 'user#id'..user_id, ok_cb, false)
-                end
-                return
-            end
-        else
-            return '🚫 '..lang_text(msg.to.id, 'require_mod')
-        end
-    elseif matches[1] == 'mute' then
-        if permissions(msg.from.id, msg.to.id, "mute") then
-            if msg.reply_id then
-                get_message(msg.reply_id, mute_by_reply, false)
-                return
-            end
-            if matches[2] then
-                if is_id(matches[2]) then
-                    local hash = 'muted:'..msg.to.id..':'..matches[2]
-                    redis:set(hash, true)
-                    if msg.to.type == 'chat' then
-                        send_msg('chat#id'..msg.to.id, 'ℹ️ '..lang_text(chat_id, 'userMuted:1')..' '..matches[2]..' '..lang_text(chat_id, 'userMuted:2'), ok_cb, true)
-                    elseif msg.to.type == 'channel' then
-                        send_msg('channel#id'..msg.to.id, 'ℹ️ '..lang_text(chat_id, 'userMuted:1')..' '..matches[2]..' '..lang_text(chat_id, 'userMuted:2'), ok_cb, true)
-                    end
-                    return
-                else
-                    local member = string.gsub(matches[2], '@', '')
-                    local chat_id = msg.to.id
-                    local chat_type = msg.to.type
-                    resolve_username(member, mute_by_username, {chat_id=chat_id, member=member, chat_type=chat_type})
-                    return
-                end
-            end
-        else
-            return '🚫 '..lang_text(msg.to.id, 'require_mod')
-        end
-    elseif matches[1] == 'unmute' then
-        if permissions(msg.from.id, msg.to.id, "unmute") then
-            if msg.reply_id then
-                get_message(msg.reply_id, unmute_by_reply, false)
-                return
-            end
-            if matches[2] then
-                if is_id(matches[2]) then
-                    local hash = 'muted:'..msg.to.id..':'..matches[2]
-                    redis:del(hash)
-                    if msg.to.type == 'chat' then
-                        send_msg('chat#id'..msg.to.id, 'ℹ️ '..lang_text(chat_id, 'userUnmuted:1')..' '..matches[2]..' '..lang_text(chat_id, 'userUnmuted:2'), ok_cb, true)
-                    elseif msg.to.type == 'channel' then
-                        send_msg('channel#id'..msg.to.id, 'ℹ️ '..lang_text(chat_id, 'userUnmuted:1')..' '..matches[2]..' '..lang_text(chat_id, 'userUnmuted:2'), ok_cb, true)
-                    end
-                    return
-                else
-                    local member = string.gsub(matches[2], '@', '')
-                    local chat_id = msg.to.id
-                    local chat_type = msg.to.type
-                    resolve_username(member, unmute_by_username, {chat_id=chat_id, member=member, chat_type=chat_type})
-                    return
-                end
-            end
-        else
-            return '🚫 '..lang_text(msg.to.id, 'require_mod')
-        end
-    elseif matches[1] == 'kickme' then
-        local hash = 'kickme:'..msg.to.id
-        if redis:get(hash) then
-            if msg.to.type == 'chat' then
-                send_msg('chat#id'..msg.to.id, '👋🏽 '..lang_text(chat_id, 'kickmeBye')..' @'..msg.from.username..' ('..msg.from.id..').', ok_cb, true)
-                chat_del_user('chat#id'..msg.to.id, 'user#id'..msg.from.id, ok_cb, false)
-            elseif msg.to.type == 'channel' then
-                send_msg('channel#id'..msg.to.id, '👋🏽 '..lang_text(chat_id, 'kickmeBye')..' @'..msg.from.username..' ('..msg.from.id..').', ok_cb, true)
-                channel_kick_user('channel#id'..msg.to.id, 'user#id'..msg.from.id, ok_cb, false)
-            end
-        end  
+    
+    if matches[1] == 'sdemote' then
+      if not is_admin(msg) then
+        return "Only moderator can demote moderator leader"
+      end
+      if not matches[2] and msg.reply_id then
+        get_message(msg.reply_id, get_msg_callback, {get_cmd=get_cmd, receiver=receiver})
+        return
+      end
+      if not matches[2] then
+        return
+      end
+      if string.match(matches[2], '^%d+$') then
+        return sdemote(receiver, matches[2], matches[2])
+      end
+      local member = string.gsub(matches[2], "@", "")
+      chat_info(receiver, username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
     end
+    
+    if matches[1] == 'modlist' then
+      return modlist(msg)
+    end
+    
+    if matches[1] == 'adminprom' then
+      if not is_admin(msg) then
+        return "Only sudo can promote user as admin"
+      end
+      local member = string.gsub(matches[2], "@", "")
+      chat_info(receiver, username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
+    end
+    
+    if matches[1] == 'admindem' then
+      if not is_admin(msg) then
+        return "Only sudo can promote user as admin"
+      end
+      if string.match(matches[2], '^%d+$') then
+        admin_demote(receiver, matches[2], matches[2])
+      else
+        local member = string.gsub(matches[2], "@", "")
+        chat_info(receiver, username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
+      end
+    end
+    
+    if matches[1] == 'adminlist' then
+      if not is_admin(msg) then
+        return 'Admin only!'
+      end
+      return admin_list(msg)
+    end
+    
+    if matches[1] == 'chat_add_user' and msg.action.user.id == our_id then
+      chat_del_user(receiver, 'user#id'..our_id, ok_cb, true)
+    end
+    
+    if matches[1] == 'chat_created' and msg.from.id == 0 then
+      --return automodadd(msg)
+    end
+  end
+  if is_channel_msg(msg) then -- supergrouuuuppppppppp
+    local get_cmd = matches[1]
+    local receiver = get_receiver(msg)
+    if matches[1] == 'modadd' then
+      return modadd(msg)
+    end
+    
+    if matches[1] == 'modrem' then
+      return modrem(msg)
+    end
+    
+    if matches[1] == 'promote' then
+      if not is_momod(msg) then
+        return
+      end
+      if not matches[2] and msg.reply_id then
+        get_message(msg.reply_id, get_msg_callback, {get_cmd=get_cmd, receiver=receiver})
+        return
+      end
+      if not matches[2] then
+        return
+      end
+      local member = string.gsub(matches[2], "@", "")
+      channel_get_users(receiver, channel_username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
+    end
+    
+    if matches[1] == 'demote' then
+      if not is_momod(msg) then
+        return "Only moderator can demote"
+      end
+      if not matches[2] and msg.reply_id then
+        get_message(msg.reply_id, get_msg_callback, {get_cmd=get_cmd, receiver=receiver})
+        return
+      end
+      if not matches[2] then
+        return
+      end
+      if string.gsub(matches[2], "@", "") == msg.from.username then
+        return "You can't demote yourself"
+      end
+      local member = string.gsub(matches[2], "@", "")
+      channel_get_users(receiver, channel_username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
+    end
+    
+    if matches[1] == 'spromote' then
+      if not is_admin(msg) then
+        return "Only admin can promote moderator leader"
+      end
+      if not matches[2] and msg.reply_id then
+        get_message(msg.reply_id, get_msg_callback, {get_cmd=get_cmd, receiver=receiver})
+        return
+      end
+      if not matches[2] then
+        return
+      end
+      local member = string.gsub(matches[2], "@", "")
+      channel_get_users(receiver, channel_username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
+    end
+    
+    if matches[1] == 'sdemote' then
+      if not is_admin(msg) then
+        return "Only moderator can demote moderator leader"
+      end
+      if not matches[2] and msg.reply_id then
+        get_message(msg.reply_id, get_msg_callback, {get_cmd=get_cmd, receiver=receiver})
+        return
+      end
+      if not matches[2] then
+        return
+      end
+      if string.match(matches[2], '^%d+$') then
+        return sdemote(receiver, matches[2], matches[2])
+      end
+      local member = string.gsub(matches[2], "@", "")
+      channel_get_users(receiver, channel_username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
+    end
+    
+    if matches[1] == 'modlist' then
+      return modlist(msg)
+    end
+    
+    if matches[1] == 'upmanager' then
+      if not is_admin(msg) then
+        if not is_spromoted(msg.to.id, msg.from.id) then
+          return "You're not a leader"
+        end
+      end
+      if not matches[2] and msg.reply_id then
+        get_message(msg.reply_id, get_msg_callback, {get_cmd=get_cmd, receiver=receiver})
+        return
+      end
+      if not matches[2] then
+        return
+      end
+      if string.match(matches[2], '^%d+$') then
+        return upmanager(receiver, matches[2], matches[2])
+      end
+      local member = string.gsub(matches[2], "@", "")
+      channel_get_users(receiver, channel_username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
+    end
+    
+    if matches[1] == 'inmanager' then
+      if not is_admin(msg) then
+        if not is_spromoted(msg.to.id, msg.from.id) then
+          return "You're not a leader"
+        end
+      end
+      if not matches[2] and msg.reply_id then
+        get_message(msg.reply_id, get_msg_callback, {get_cmd=get_cmd, receiver=receiver})
+        return
+      end
+      if not matches[2] then
+        return
+      end
+      if string.match(matches[2], '^%d+$') then
+        return sdemote(receiver, matches[2], matches[2])
+      end
+      local member = string.gsub(matches[2], "@", "")
+      channel_get_users(receiver, channel_username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
+    end
+    
+    if matches[1] == 'adminprom' then
+      if not is_admin(msg) then
+        return "Only sudo can promote user as admin"
+      end
+      local member = string.gsub(matches[2], "@", "")
+      channel_get_users(receiver, channel_username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
+    end
+    
+    if matches[1] == 'admindem' then
+      if not is_admin(msg) then
+        return "Only sudo can promote user as admin"
+      end
+      if string.match(matches[2], '^%d+$') then
+        admin_demote(receiver, matches[2], matches[2])
+      else
+        local member = string.gsub(matches[2], "@", "")
+        channel_get_users(receiver, channel_username_id, {get_cmd= get_cmd, receiver=receiver, member=member})
+      end
+    end
+    
+    if matches[1] == 'adminlist' then
+      if not is_admin(msg) then
+        return 'Admin only!'
+      end
+      return admin_list(msg)
+    end
+    
+    if matches[1] == 'chat_add_user' and msg.action.user.id == our_id then
+      channel_kick_user(receiver, 'user#id'..our_id, ok_cb, true)
+    end
+  else
+    return
+  end
 end
 
 return {
-    patterns = {
-        "^#(ban) (.*)$",
-        "^#(ban)$",
-        "^#(unban) (.*)$",
-        "^#(unban)$",
-        "^#(kick) (.*)$",
-        "^#(kick)$",
-        "^#(kickme)$",
-        "^#(add) (.*)$",
-        "^#(add)$",
-        "^#(gban) (.*)$",
-        "^#(gban)$",
-        "^#(ungban) (.*)$",
-        "^#(ungban)$",
-        '^#(mute) (.*)$',
-        '^#(mute)$',
-        '^#(unmute) (.*)$',
-        '^#(unmute)$',
-        "^!!tgservice (.*)$"
-    },
-    run = run,
-    pre_process = pre_process
+  description = "Moderation plugin", 
+  usage = {
+      user = {
+          "/modlist : List of moderators",
+          },
+      moderator = {
+          "/promote <username> : Promote user as moderator by username",
+          "/promote (on reply) : Promote user as moderator by reply",
+          "/demote <username> : Demote user from moderator",
+          "/demote (on reply) : demote user from moderator by reply",
+          },
+      admin = {
+          "/modadd : Add group to moderation list",
+          "/modrem : Remove group from moderation list",
+          "/spromote <username> : Promote user as moderator leader by username",
+          "/spromote (on reply) : Promote user as moderator leader by reply",
+          "/sdemote <username> : Demote user from being moderator leader by username",
+          "/sdemote (on reply) : Demote user from being moderator leader by reply",
+          },
+      sudo = {
+          "/adminprom <username> : Promote user as admin (must be done from a group)",
+          "/admindem <username> : Demote user from admin (must be done from a group)",
+          "/admindem <id> : Demote user from admin (must be done from a group)",
+          },
+      },
+  patterns = {
+    "^/(modadd)$",
+    "^/(modrem)$",
+    "^/(spromote) (.*)$",
+    "^/(spromote)$",
+    "^/(sdemote) (.*)$",
+    "^/(sdemote)$",
+    "^/(promote) (.*)$",
+    "^/(promote)$",
+    "^/(demote) (.*)$",
+    "^/(demote)$",
+    "^/(upmanager) (.*)$",
+    "^/(upmanager)",
+    "^/(inmanager) (.*)$",
+    "^/(inmanager)",
+    "^/(modlist)$",
+    "^/(adminprom) (.*)$", -- sudoers only
+    "^/(admindem) (.*)$", -- sudoers only
+    "^/(adminlist)$",
+    "^!!tgservice (chat_add_user)$",
+    "^!!tgservice (chat_created)$",
+  }, 
+  run = run,
 }
+
 end
